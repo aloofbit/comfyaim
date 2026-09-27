@@ -209,16 +209,37 @@ function send(c, ...fields) {
 function broadcast(...fields) {
   for (const c of online.values()) send(c, ...fields);
 }
+// A player who drops off is kept on the list for PART_GRACE before anybody is told. A web page that
+// is left for another page, or a /reload, closes the socket and opens a new one a second later, and
+// without this every click on the website would be a "signed off" and a "signed on" in everybody's
+// room. Coming back inside the grace says nothing at all.
+const PART_GRACE = Number(process.env.PART_GRACE_MS) || 15000;
+const lingering = new Map();    // lower-case nick -> { nick, realm, timer }
+
 function who() {
-  const list = [...online.values()].sort((a, b) => a.nick.toLowerCase() < b.nick.toLowerCase() ? -1 : 1);
-  return list.flatMap(c => [c.nick, c.realm]);
+  const list = [...online.values()].map(c => ({ nick: c.nick, realm: c.realm }));
+  for (const [k, l] of lingering) if (!online.has(k)) list.push(l);
+  list.sort((a, b) => a.nick.toLowerCase() < b.nick.toLowerCase() ? -1 : 1);
+  return list.flatMap(l => [l.nick, l.realm]);
 }
 
-function leave(c, why) {
+// now: tell everybody at once. A rename, a kick and a ban are not something to wait out.
+function leave(c, why, now) {
   if (!c.nick || online.get(c.nick.toLowerCase()) !== c) return;
-  online.delete(c.nick.toLowerCase());
-  broadcast('PART', c.nick);
-  log('part ' + c.nick + ' (' + why + ')');
+  const key = c.nick.toLowerCase(), nick = c.nick;
+  online.delete(key);
+  if (now || c.partNow) {
+    broadcast('PART', nick);
+    log('part ' + nick + ' (' + why + ')');
+    return;
+  }
+  const timer = setTimeout(() => {
+    lingering.delete(key);
+    broadcast('PART', nick);
+    log('part ' + nick + ' (' + why + ')');
+  }, PART_GRACE);
+  timer.unref();
+  lingering.set(key, { nick, realm: c.realm, timer });
 }
 
 function hello(c, nick, secret, version, realm, address) {
@@ -243,13 +264,21 @@ function hello(c, nick, secret, version, realm, address) {
 
   // The same person from a second window, or reconnecting before the old socket timed out.
   const prev = online.get(key);
+  // A web page opening its socket before the last page's has closed lands here, and it is the same
+  // person coming straight back, the same as a return inside the grace below.
+  const replacedWhere = prev && prev !== c ? prev.realm : undefined;
   if (prev && prev !== c) {
     send(prev, 'ERR', 'replaced', 'Signed on from another client.');
     prev.nick = null;
     close(prev, 'replaced');
   }
   const renamed = c.nick && c.nick !== nick;
-  if (renamed) leave(c, 'renamed to ' + nick);
+  if (renamed) leave(c, 'renamed to ' + nick, true);
+
+  // Back inside the grace: nobody was told they left, so nobody is told they came back.
+  let back = lingering.get(key);
+  if (back) { clearTimeout(back.timer); lingering.delete(key); }
+  else if (replacedWhere !== undefined) back = { realm: replacedWhere };
 
   const first = !c.nick || renamed;
   const realmChanged = c.realm !== realm;
@@ -265,9 +294,10 @@ function hello(c, nick, secret, version, realm, address) {
     send(c, 'WHO', ...who());
   }
   // Everybody else learns the nick, or where it now is.
-  if (first || realmChanged)
+  const announce = first ? !back || back.realm !== realm : realmChanged;
+  if (announce)
     for (const o of online.values()) if (o !== c) send(o, 'JOIN', nick, realm);
-  if (first) log('join ' + nick + (realm ? ' on ' + realm : '') + ' from ' + c.ip + ' (' + c.version + ')');
+  if (first && !back) log('join ' + nick + (realm ? ' on ' + realm : '') + ' from ' + c.ip + ' (' + c.version + ')');
 }
 
 function say(c, text) {
@@ -298,6 +328,7 @@ function admin(c, verb, target) {
   if (verb === 'kick') {
     if (!t) return send(c, 'ERR', 'admin', target + ' is not online.');
     send(t, 'ERR', 'kicked', 'Kicked by ' + c.nick + '.');
+    t.partNow = true;
     close(t, 'kicked by ' + c.nick);
     return send(c, 'SYS', 'Kicked ' + t.nick + '.');
   }
@@ -307,7 +338,7 @@ function admin(c, verb, target) {
     bans.hashes[hash] = { nick: target, ip: t ? t.ip : null, at: Date.now() };
     if (t) bans.ips[t.ip] = { nick: t.nick, at: Date.now() };
     writeJson(BANS_FILE, bans);
-    if (t) { send(t, 'ERR', 'banned', 'Banned by ' + c.nick + '.'); close(t, 'banned by ' + c.nick); }
+    if (t) { send(t, 'ERR', 'banned', 'Banned by ' + c.nick + '.'); t.partNow = true; close(t, 'banned by ' + c.nick); }
     log('ban ' + target + ' by ' + c.nick);
     return send(c, 'SYS', 'Banned ' + target + '.');
   }
@@ -365,9 +396,36 @@ function peerIp(req) {
   return peer;
 }
 
+// Plain HTTP, for the web widget (web/widget.js):
+//   GET /aim             { online, who: [[nick, where]...], lines: [[ts, nick, text, where]...] }
+//                        ?lines=0 leaves the room out, which is all a page's AIM button needs. Read by
+//                        visitors who have not signed on, so a page view opens no WebSocket.
+//   GET /aim/widget.js, /aim/widget.css
+// Open to every origin: the widget is meant to be embedded, and nothing here is not already public to
+// anybody who signs on.
+const WEB_DIR = [path.join(__dirname, 'web'), path.join(__dirname, '..', 'web')].find(d => fs.existsSync(d));
+const WEB_FILES = { '/aim/widget.js': 'text/javascript; charset=utf-8', '/aim/widget.css': 'text/css; charset=utf-8' };
+
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'content-type': 'text/plain' });
-  res.end('comfyaim hub: ' + online.size + ' online\n');
+  const url = new URL(req.url, 'http://hub');
+  const cors = { 'access-control-allow-origin': '*' };
+  if (req.method === 'GET' && url.pathname === '/aim') {
+    const want = Math.max(0, Math.min(BACKLOG, Number(url.searchParams.get('lines') ?? BACKLOG) || 0));
+    const w = who(), pairs = [];
+    for (let i = 0; i < w.length; i += 2) pairs.push([w[i], w[i + 1]]);
+    const body = JSON.stringify({ online: pairs.length, who: pairs, lines: want ? backlog.slice(-want) : [] });
+    res.writeHead(200, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors));
+    return res.end(body);
+  }
+  if (req.method === 'GET' && WEB_FILES[url.pathname] && WEB_DIR) {
+    return fs.readFile(path.join(WEB_DIR, path.basename(url.pathname)), (err, data) => {
+      if (err) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, Object.assign({ 'content-type': WEB_FILES[url.pathname], 'cache-control': 'max-age=300' }, cors));
+      res.end(data);
+    });
+  }
+  res.writeHead(404, { 'content-type': 'text/plain' });
+  res.end('comfyaim hub\n');
 });
 
 server.on('upgrade', (req, sock) => {

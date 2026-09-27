@@ -57,6 +57,23 @@ It needs [VanillaFixes](https://github.com/hannesmann/vanillafixes), which loads
 
 A copy of `comfyaim.ini` in a second client folder signs on as the same person, and throws the first one off.
 
+## On a website
+
+Put the room on any web page with one line. It draws an AIM button in the corner of the page:
+
+```html
+<script src="https://comfycraft.dedyn.io/aim/widget.js" defer></script>
+```
+
+To draw the room into the page instead:
+
+```html
+<div id="aim"></div>
+<script src="https://comfycraft.dedyn.io/aim/widget.js" data-mode="inline" data-target="#aim" defer></script>
+```
+
+Visitors pick a name and show as WEB. A page with a Content-Security-Policy must allow `comfycraft.dedyn.io` for scripts, styles and connections.
+
 ## Add your server
 
 Add one line to [`servers.txt`](servers.txt) with a pull request: a short tag, the login address players type as their realmlist, and the name. Once it is merged, players on your server show your tag within 10 minutes. Only public servers, and no IP addresses.

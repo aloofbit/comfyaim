@@ -1,5 +1,5 @@
 // Checks a running hub from the outside. Start one on a spare port with a throwaway data folder:
-//   PORT=8096 DATA=%TEMP%/aimtest ADMINS=adminnick node hub/server.js
+//   PORT=8096 DATA=%TEMP%/aimtest PART_GRACE_MS=1500 SERVERS_URL= node hub/server.js
 //   node hub/test.js ws://127.0.0.1:8096/aim
 'use strict';
 const crypto = require('crypto');
@@ -101,6 +101,22 @@ function client() {
   const c = await client();
   c.send('HELLO', nickA, secret(), 'test');
   check(!!await c.wait(/^WELCOME/), 'the old nick is free for somebody else');
+
+  // The grace: a socket that drops and comes straight back is announced to nobody; one that stays
+  // gone is announced when the grace runs out. Run the hub with PART_GRACE_MS=1500 for this.
+  const sd = secret(), nickD = 'Dan' + run;
+  let d = await client();
+  d.send('HELLO', nickD, sd, 'test');
+  await d.wait(/^WELCOME/);
+  await b.wait(new RegExp('^JOIN\\t' + nickD + '\\t'));
+  d.ws.close();
+  await new Promise(r => setTimeout(r, 300));
+  d = await client();
+  d.send('HELLO', nickD, sd, 'test');
+  await d.wait(/^WELCOME/);
+  check(!await b.wait(new RegExp('^(PART|JOIN)\\t' + nickD), 2500), 'a quick return is announced to nobody');
+  d.ws.close();
+  check(!!await b.wait(new RegExp('^PART\\t' + nickD + '$'), 4000), 'a real departure is announced after the grace');
 
   b.send('ADMIN', 'kick', nickA);
   check(/^ERR\tadmin/.test(await b.wait(/^ERR/)), 'a non-admin cannot kick');
