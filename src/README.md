@@ -114,6 +114,7 @@ node hub/test.js ws://127.0.0.1:8096/aim
 | `PORT`, `HOST` | `8095`, `127.0.0.1` | Behind nginx. `X-Real-IP` is trusted only from a loopback peer. |
 | `DATA` | `hub/data` | `nicks.json`, `bans.json` (edit by hand, reloaded on change), `room.log`, and `backlog.json` (the last 100 lines, sent on sign on and kept across restarts). |
 | `ADMINS` | none | Comma-separated nicks that may kick, ban and unban. |
+| `DISCORD_TOKEN`, `DISCORD_CHANNEL` | none | Both set: the room is bridged to that Discord channel both ways (`hub/discord.js`). The bot needs the Message Content intent and Manage Webhooks in the channel. |
 | `SERVERS_URL` | `servers.txt` on GitHub's `main` | Fetched every 10 minutes; empty turns the fetch off. The copy next to `server.js` (or the repo root) is read at start. |
 
 **Where a player is** comes from `servers.txt`: the client sends its login address (the `realmList`

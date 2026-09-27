@@ -318,7 +318,42 @@ function say(c, text) {
   backlogDirty = true;
   roomLog(c, text);
   broadcast('MSG', String(ts), c.nick, text, c.realm);
+  if (discord) discord.post(c.nick, c.realm, text);
 }
+
+// ------------------------------------------------------------------------------------------------
+// Discord (hub/discord.js), when DISCORD_TOKEN and DISCORD_CHANNEL are set.
+//
+// A Discord user is not a nick: nobody claims the name, and it shows as "Name (DISCORD)" so nobody on
+// Discord can pass as a player in game. They are rate limited and banned by their Discord id, which
+// bans.json keeps under "discord"; an admin bans one by the name the room last saw them under.
+
+const discordSaid = new Map();       // Discord id -> times of recent lines
+const discordNames = new Map();      // lower-case name as shown -> Discord id, for /aim ban
+
+function fromDiscord({ id, name, text }) {
+  if (bans.discord && bans.discord[id]) return;
+  const now = Date.now();
+  const said = (discordSaid.get(id) || []).filter(t => now - t < RATE_WINDOW);
+  if (said.length >= RATE_LINES) return;
+  said.push(now);
+  discordSaid.set(id, said);
+  const nick = clean(name).slice(0, 32) || 'someone';
+  text = clean(text);
+  if (!text) return;
+  discordNames.set(nick.toLowerCase(), id);
+  if (discordNames.size > 500) discordNames.delete(discordNames.keys().next().value);
+  const ts = Math.floor(now / 1000);
+  backlog.push([ts, nick, text, 'DISCORD']);
+  if (backlog.length > BACKLOG) backlog.shift();
+  backlogDirty = true;
+  roomLog({ ip: 'discord:' + id, nick }, text);
+  broadcast('MSG', String(ts), nick, text, 'DISCORD');
+}
+
+const discord = process.env.DISCORD_TOKEN && process.env.DISCORD_CHANNEL
+  ? require('./discord')({ token: process.env.DISCORD_TOKEN, channel: process.env.DISCORD_CHANNEL, log, onMessage: fromDiscord })
+  : null;
 
 function admin(c, verb, target) {
   if (!c.nick || !ADMINS.has(c.nick.toLowerCase())) return send(c, 'ERR', 'admin', 'Not an admin.');
@@ -334,6 +369,14 @@ function admin(c, verb, target) {
   }
   if (verb === 'ban') {
     const hash = t ? t.hash : owner && owner.hash;
+    const discordId = !hash && discordNames.get(key);
+    if (discordId) {
+      bans.discord = bans.discord || {};
+      bans.discord[discordId] = { nick: target, at: Date.now() };
+      writeJson(BANS_FILE, bans);
+      log('ban ' + target + ' (Discord ' + discordId + ') by ' + c.nick);
+      return send(c, 'SYS', 'Banned ' + target + ' from Discord.');
+    }
     if (!hash) return send(c, 'ERR', 'admin', 'No nick ' + target + '.');
     bans.hashes[hash] = { nick: target, ip: t ? t.ip : null, at: Date.now() };
     if (t) bans.ips[t.ip] = { nick: t.nick, at: Date.now() };
@@ -346,6 +389,7 @@ function admin(c, verb, target) {
     let n = 0;
     for (const h of Object.keys(bans.hashes)) if (String(bans.hashes[h].nick).toLowerCase() === key) { delete bans.hashes[h]; n++; }
     for (const ip of Object.keys(bans.ips)) if (String(bans.ips[ip].nick).toLowerCase() === key) { delete bans.ips[ip]; n++; }
+    for (const id of Object.keys(bans.discord || {})) if (String(bans.discord[id].nick).toLowerCase() === key) { delete bans.discord[id]; n++; }
     writeJson(BANS_FILE, bans);
     log('unban ' + target + ' by ' + c.nick);
     return send(c, 'SYS', n ? 'Unbanned ' + target + '.' : 'No ban for ' + target + '.');
@@ -493,6 +537,7 @@ setInterval(() => {
 function shutdown() {
   if (nicksDirty) writeJson(NICKS_FILE, nicks);
   if (backlogDirty) writeJson(BACKLOG_FILE, backlog);
+  if (discord) discord.stop();
   for (const c of clients) { send(c, 'SYS', 'The hub is restarting.'); close(c, 'shutdown'); }
   server.close();
   setTimeout(() => process.exit(0), 500);
