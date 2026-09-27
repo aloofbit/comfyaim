@@ -78,7 +78,10 @@
     root.appendChild(fab);
   }
 
-  var panel = el('section', 'panel ' + MODE);
+  // data-frame="none": no border, padding or fill of our own, for a page that draws its own frame round
+  // the room (the ComfyCraft site's gold one). The boxes inside keep theirs.
+  var BARE = MODE === 'inline' && script.getAttribute('data-frame') === 'none';
+  var panel = el('section', 'panel ' + MODE + (BARE ? ' bare' : ''));
   panel.setAttribute('aria-label', 'AIM chat room');
   root.appendChild(panel);
 

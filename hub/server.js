@@ -462,10 +462,19 @@ const server = http.createServer((req, res) => {
     return res.end(body);
   }
   if (req.method === 'GET' && WEB_FILES[url.pathname] && WEB_DIR) {
-    return fs.readFile(path.join(WEB_DIR, path.basename(url.pathname)), (err, data) => {
+    // no-cache with Last-Modified: a browser asks each time and gets a 304 while the file is the same,
+    // so an update to the widget reaches every page at once, not five minutes later.
+    const file = path.join(WEB_DIR, path.basename(url.pathname));
+    return fs.stat(file, (err, st) => {
       if (err) { res.writeHead(404); return res.end(); }
-      res.writeHead(200, Object.assign({ 'content-type': WEB_FILES[url.pathname], 'cache-control': 'max-age=300' }, cors));
-      res.end(data);
+      const modified = st.mtime.toUTCString();
+      const headers = Object.assign({ 'content-type': WEB_FILES[url.pathname], 'cache-control': 'no-cache', 'last-modified': modified }, cors);
+      if (req.headers['if-modified-since'] === modified) { res.writeHead(304, headers); return res.end(); }
+      fs.readFile(file, (err2, data) => {
+        if (err2) { res.writeHead(404); return res.end(); }
+        res.writeHead(200, headers);
+        res.end(data);
+      });
     });
   }
   res.writeHead(404, { 'content-type': 'text/plain' });

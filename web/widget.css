@@ -84,6 +84,8 @@ button { font: inherit; cursor: pointer; }
   height: 70vh;
   min-height: 320px;
 }
+/* data-frame="none": the page's own frame is the room's edge. */
+.panel.bare { border: 0; padding: 0; background: transparent; }
 
 .head { display: flex; align-items: baseline; gap: 10px; min-height: 24px; }
 .title { color: var(--gold); font-size: 17px; font-weight: 700; }
