@@ -45,6 +45,7 @@ namespace
     std::string  g_savedNick;    // the one in the ini: the hub accepted it once
     std::string  g_nick;         // the one to say HELLO with
     std::string  g_realm;        // the realm the player is on, from the addon; kept in the ini
+    std::string  g_address;      // the login address (realmList), the same way
     std::string  g_onlineNick;   // the one the hub welcomed on this socket, empty until then
     std::string  g_state = "offline";
     std::string  g_stop;         // "banned" or "replaced": no reconnecting until "reconnect"
@@ -149,10 +150,10 @@ namespace
         LeaveCriticalSection(&g_wsLock);
     }
 
-    // Under g_lock: it reads g_realm, which the render thread can change.
+    // Under g_lock: it reads g_realm and g_address, which the render thread can change.
     std::string HelloLine(const std::string& nick)
     {
-        return "HELLO\t" + nick + "\t" + g_secret + "\t" + kVersion + "\t" + g_realm;
+        return "HELLO\t" + nick + "\t" + g_secret + "\t" + kVersion + "\t" + g_realm + "\t" + g_address;
     }
 
     // A line from the hub, looked at before Lua gets it. Called on the connection thread.
@@ -452,6 +453,7 @@ void NetStart(const wchar_t* iniPath)
     }
     g_nick = g_savedNick = ReadIni(L"nick");
     g_realm = ReadIni(L"realm");
+    g_address = ReadIni(L"address");
     if (ReadIni(L"online") == "0")
         g_stop = "signedoff";   // signed off last session: wait for Sign On
     Log("net: hub %ls, nick \"%s\"", g_cfg.hubUrl, g_nick.c_str());
@@ -493,11 +495,15 @@ void NetCommand(const std::string& cmd)
     }
     else if (verb == "realm")
     {
-        const std::string realm = Field(cmd, 1);
-        if (realm != g_realm)
+        // "realm\t<realm name>\t<login address>". The hub turns a listed address into the server's tag and
+        // never passes the address on.
+        const std::string realm = Field(cmd, 1), address = Field(cmd, 2);
+        if (realm != g_realm || address != g_address)
         {
             g_realm = realm;
+            g_address = address;
             WriteIni(L"realm", realm);
+            WriteIni(L"address", address);
             if (!g_onlineNick.empty())
             {
                 g_out.push_back(HelloLine(g_onlineNick));   // the same nick again: only the realm changes

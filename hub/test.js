@@ -70,6 +70,13 @@ function client() {
   const mr = await b.wait(/^MSG\t\d+\t\w+\tfrom a realm/);
   check(mr && mr.split('\t')[4] === 'ComfyCraft', 'MSG carries the realm at the end');
 
+  // A login address in servers.txt shows as the tag, and the address itself goes to nobody.
+  a.send('HELLO', nickA, sa, 'test', 'Brill', 'comfycraft.dedyn.io:3724');
+  check(!!await b.wait(new RegExp('^JOIN\\t' + nickA + '\\tCOMFY$')), 'a listed address shows as its tag');
+  a.send('HELLO', nickA, sa, 'test', 'Brill', '192.168.1.20');
+  check(!!await b.wait(new RegExp('^JOIN\\t' + nickA + '\\tBrill$')), 'an unlisted address falls back to the realm name');
+  check(!b.lines.concat(a.lines).some(l => /dedyn|192\.168/.test(l)), 'no address is ever sent');
+
   const long = 'x'.repeat(400);
   a.send('SAY', long);
   const lm = await a.wait(/^MSG\t\d+\t\w+\tx/);

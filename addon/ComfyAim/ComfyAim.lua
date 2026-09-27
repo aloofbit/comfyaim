@@ -631,11 +631,15 @@ local function TryAutoNick()
 	Push("DLL\tnick\t" .. me)
 end
 
+-- The realm name and the login address. The hub shows the server's tag for an address in servers.txt,
+-- the realm name otherwise, and passes the address to nobody.
 local function SendRealm()
-	local realm = GetRealmName and GetRealmName()
-	if realm and realm ~= "" then
-		Push("DLL\trealm\t" .. string.gsub(realm, "[\t\r\n]", " "))
-	end
+	local realm = GetRealmName and GetRealmName() or ""
+	local ok, address = pcall(GetCVar, "realmList")
+	if not ok or not address then address = "" end
+	realm = string.gsub(realm, "[\t\r\n]", " ")
+	address = string.gsub(address, "[\t\r\n]", " ")
+	Push("DLL\trealm\t" .. realm .. "\t" .. address)
 end
 
 function ComfyAim_OnLine(line)

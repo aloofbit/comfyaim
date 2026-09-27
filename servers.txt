@@ -1,0 +1,21 @@
+# Servers the comfyaim room knows by name.
+#
+# A player on one of these shows its tag after their name, "Luf (COMFY)". A player on a server that is
+# not here shows the realm name instead.
+#
+# One server a line:   TAG | login address, login address | Server name
+#
+#   TAG       2 to 8 capital letters or digits. It is what people see, so keep it short.
+#   address   What players type as their realmlist, without a port. "*.example.org" matches every
+#             address that ends in .example.org.
+#   name      The full name.
+#
+# To add your server, open a pull request that adds one line. Only public servers, and no IP addresses:
+# this file is public, and an IP here publishes whoever's machine it points at.
+#
+# The room reads this file from GitHub every 10 minutes, so a merged line goes live within 10 minutes.
+
+COMFY   | comfycraft.dedyn.io     | ComfyCraft
+OCTO    | play.octowow.st         | OctoWoW
+RAVEN   | logon.ravencraft.io     | RavenCraft
+CHROMIE | logon.chromiecraft.com  | ChromieCraft

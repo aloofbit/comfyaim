@@ -114,6 +114,12 @@ node hub/test.js ws://127.0.0.1:8096/aim
 | `PORT`, `HOST` | `8095`, `127.0.0.1` | Behind nginx. `X-Real-IP` is trusted only from a loopback peer. |
 | `DATA` | `hub/data` | `nicks.json`, `bans.json` (edit by hand, reloaded on change), `room.log`, and `backlog.json` (the last 100 lines, sent on sign on and kept across restarts). |
 | `ADMINS` | none | Comma-separated nicks that may kick, ban and unban. |
+| `SERVERS_URL` | `servers.txt` on GitHub's `main` | Fetched every 10 minutes; empty turns the fetch off. The copy next to `server.js` (or the repo root) is read at start. |
+
+**Where a player is** comes from `servers.txt`: the client sends its login address (the `realmList`
+setting) with HELLO, and the hub shows the matching tag, or the realm name when there is none. The address
+goes to the hub only. It is never sent to another client, because a server run at home is somebody's home
+connection. A fetched list that has no valid line is ignored, so a bad pull request cannot empty the list.
 
 A nick belongs to the first secret that used it. The hub keeps `sha256(secret)` only. One secret holds one nick,
 and a nick unused for 90 days is free again.

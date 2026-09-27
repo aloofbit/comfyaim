@@ -16,7 +16,7 @@ and every player with comfyaim sees it, whatever server they are on.
 | **`/a`** | A chat type, like `/p` for party. `/a hello` talks in the room, and the chat box stays in AIM mode after Enter. |
 | **The AIM window** | The room, a buddy list of who is online, a box to type in, and the Change Name, Sign On and Sign Off buttons. Drag the dots in the corner to resize it. |
 | **Friends list button** | The running figure between Add Friend and Send Message opens the window. The number on it is how many are online. |
-| **Realms** | Each name shows the realm that player is on. Hover a name in the buddy list to see it. |
+| **Servers** | Each name shows where that player is: the server's tag, such as COMFY or OCTO, or the realm name for a server that is not in [`servers.txt`](servers.txt). |
 | **Your nick** | Your first character's name, unless somebody has it. It stays yours on every server you play on. |
 
 ## Commands
@@ -53,9 +53,15 @@ It needs [VanillaFixes](https://github.com/hannesmann/vanillafixes), which loads
 | --- | --- |
 | `[hub] enabled` | `0` turns comfyaim off. |
 | `[hub] url` | The chat room to join. |
-| `[hub] nick`, `secret`, `realm` | Written by comfyaim. The secret proves the nick is yours. Do not share it. |
+| `[hub] nick`, `secret`, `realm`, `address` | Written by comfyaim. The secret proves the nick is yours. Do not share it. |
 
 A copy of `comfyaim.ini` in a second client folder signs on as the same person, and throws the first one off.
+
+## Add your server
+
+Add one line to [`servers.txt`](servers.txt) with a pull request: a short tag, the login address players type as their realmlist, and the name. Once it is merged, players on your server show your tag within 10 minutes. Only public servers, and no IP addresses.
+
+Your login address goes to the room so it can find your tag. The room shows nobody the address.
 
 ## Rules
 

@@ -8,19 +8,23 @@
 // Wire format: one text frame is one line, fields split by a tab. A field never holds a tab or a
 // newline; the hub strips both from anything a client sends.
 //
-//   client to hub                      hub to client
-//   HELLO  nick  secret  version  realm    WELCOME  nick  count
-//   SAY    text                              HIST     ts  nick  text  realm   (the backlog, oldest first)
-//   WHO                                      MSG      ts  nick  text  realm
-//   ADMIN  kick|ban|unban  nick              JOIN     nick  realm
-//                                            PART     nick
-//                                            WHO      nick  realm  nick  realm  ...
+//   client to hub                                  hub to client
+//   HELLO  nick  secret  version  realm  address    WELCOME  nick  count
+//   SAY    text                                      HIST     ts  nick  text  where   (the backlog, oldest first)
+//   WHO                                              MSG      ts  nick  text  where
+//   ADMIN  kick|ban|unban  nick                      JOIN     nick  where
+//                                                    PART     nick
+//                                                    WHO      nick  where  nick  where  ...
+//                                                    SYS      text
+//                                                    ERR      code  text
 //
-// realm is the name of the realm the player is logged in to, as the client reports it, and may be
-// empty. A second HELLO on the same socket renames, or with the same nick only updates the realm.
-// New fields go on the END of a line, so an older client reading by position keeps working.
-//                                      SYS      text
-//                                      ERR      code  text
+// realm is the realm name the client reports, address its login address (the realmList setting). Both
+// may be empty. WHERE A PLAYER IS comes from them: the server's short tag when the address is in
+// servers.txt (COMFY, OCTO), else the realm name. The address itself is NEVER sent to anybody: a
+// server run at home is somebody's home connection.
+//
+// A second HELLO on the same socket renames, or with the same nick only updates where they are. New
+// fields go on the END of a line, so an older client reading by position keeps working.
 //
 // ERR codes: nick, taken, proto, muted, rate, admin; and three that come before the hub closes the
 // socket: banned, kicked, replaced (the same secret signed on from another client).
@@ -79,6 +83,70 @@ fs.watchFile(BANS_FILE, { interval: 5000 }, (cur, prev) => {
   bans = readJson(BANS_FILE, bans);
   log('bans reloaded');
 });
+
+// servers.txt: login address -> the server's short tag. The list is in the comfyaim repo so anybody
+// can add their server with a pull request. The hub reads its own copy at start (next to server.js,
+// or the repo root when run from a checkout), then the one on GitHub every 10 minutes, so a merged
+// pull request goes live without a deploy. A fetch that fails or a file with no valid line keeps the
+// list it had. SERVERS_URL= (empty) turns the fetching off.
+const SERVERS_URL = process.env.SERVERS_URL !== undefined ? process.env.SERVERS_URL
+  : 'https://raw.githubusercontent.com/aloofbit/comfyaim/main/servers.txt';
+let servers = new Map();   // address, or "*.domain" -> tag
+
+function normalAddress(a) {
+  return String(a || '').trim().toLowerCase().replace(/:\d+$/, '');
+}
+
+// "TAG | address, address | name". Returns null when no line is valid, so a broken file changes nothing.
+function parseServers(text) {
+  const map = new Map();
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.replace(/#.*/, '').trim();
+    if (!line) continue;
+    const [tag, addresses] = line.split('|').map(s => (s || '').trim());
+    if (!/^[A-Z0-9]{2,8}$/.test(tag || '')) continue;
+    for (const a of String(addresses || '').split(',')) {
+      const addr = normalAddress(a);
+      if (addr) map.set(addr, tag);
+    }
+  }
+  return map.size ? map : null;
+}
+
+function loadServers(text, from) {
+  const map = parseServers(text);
+  if (!map) return log('servers: nothing usable from ' + from + ', keeping ' + servers.size);
+  const changed = map.size !== servers.size || [...map].some(([k, v]) => servers.get(k) !== v);
+  servers = map;
+  if (changed) log('servers: ' + map.size + ' addresses from ' + from);
+}
+
+for (const f of [path.join(__dirname, 'servers.txt'), path.join(__dirname, '..', 'servers.txt')]) {
+  if (fs.existsSync(f)) { loadServers(fs.readFileSync(f, 'utf8'), f); break; }
+}
+
+function fetchServers() {
+  if (!SERVERS_URL) return;
+  const req = require('https').get(SERVERS_URL, { timeout: 10000 }, res => {
+    if (res.statusCode !== 200) { res.resume(); return log('servers: GitHub answered ' + res.statusCode); }
+    let body = '';
+    res.setEncoding('utf8');
+    res.on('data', d => { body += d; if (body.length > 65536) req.destroy(); });
+    res.on('end', () => loadServers(body, 'GitHub'));
+  });
+  req.on('timeout', () => req.destroy());
+  req.on('error', e => log('servers: ' + e.message));
+}
+setTimeout(fetchServers, 5000).unref();
+setInterval(fetchServers, 600000).unref();
+
+function serverTag(address) {
+  const a = normalAddress(address);
+  if (!a) return '';
+  if (servers.has(a)) return servers.get(a);
+  for (const [k, tag] of servers) if (k.startsWith('*.') && a.endsWith(k.slice(1))) return tag;
+  return '';
+}
 
 function expireNicks() {
   const cutoff = Date.now() - NICK_DAYS * 86400000;
@@ -153,9 +221,10 @@ function leave(c, why) {
   log('part ' + c.nick + ' (' + why + ')');
 }
 
-function hello(c, nick, secret, version, realm) {
+function hello(c, nick, secret, version, realm, address) {
   if (++c.helloTries > HELLO_TRIES) return close(c, 'too many HELLOs');
-  realm = clean(realm || '').slice(0, 32);
+  // c.realm holds WHERE the player is, as others see it: the server's tag, else the realm name.
+  realm = serverTag(address) || clean(realm || '').slice(0, 32);
   if (!validNick(nick)) return send(c, 'ERR', 'nick', 'A nick is 2 to 16 letters, digits or _.');
   if (!/^[0-9a-f]{32,128}$/.test(secret)) return send(c, 'ERR', 'proto', 'Bad secret.');
   const hash = sha256(secret);
@@ -195,7 +264,7 @@ function hello(c, nick, secret, version, realm) {
     for (const [ts, n, t, r] of backlog) send(c, 'HIST', String(ts), n, t, r);
     send(c, 'WHO', ...who());
   }
-  // Everybody else learns the nick, or its new realm.
+  // Everybody else learns the nick, or where it now is.
   if (first || realmChanged)
     for (const o of online.values()) if (o !== c) send(o, 'JOIN', nick, realm);
   if (first) log('join ' + nick + (realm ? ' on ' + realm : '') + ' from ' + c.ip + ' (' + c.version + ')');
@@ -256,7 +325,7 @@ function admin(c, verb, target) {
 function onLine(c, line) {
   const f = line.split('\t');
   switch (f[0]) {
-    case 'HELLO': return hello(c, f[1] || '', f[2] || '', f[3], f[4]);
+    case 'HELLO': return hello(c, f[1] || '', f[2] || '', f[3], f[4], f[5]);
     case 'SAY': return say(c, f.slice(1).join(' '));
     case 'WHO': return c.nick ? send(c, 'WHO', ...who()) : undefined;
     case 'ADMIN': return admin(c, f[1], f[2]);
