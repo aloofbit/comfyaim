@@ -2,6 +2,6 @@
 ## Title: ComfyAim
 ## Notes: One chat room for players on any server. Needs comfyaim.dll.
 ## Author: ComfyCraft
-## Version: 0.1.1
+## Version: 0.1.2
 ## SavedVariables: ComfyAimDB
 ComfyAim.lua

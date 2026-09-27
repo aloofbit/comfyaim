@@ -245,7 +245,15 @@ local function Refresh()
 	end
 end
 
+-- The window is built the first time it opens, but lines arrive from the start: the history at sign
+-- on, and again after every /reload. So the lines are kept here too, and a new window is filled from
+-- them. Writing only to the frame lost every line that came before the first open.
+local windowLines = {}
+local WINDOW_LINES = 300
+
 local function AddToWindow(text)
+	table.insert(windowLines, text)
+	if table.getn(windowLines) > WINDOW_LINES then table.remove(windowLines, 1) end
 	if log then log:AddMessage(text) end
 end
 
@@ -462,7 +470,8 @@ local function BuildWindow()
 	log:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", -8, 8)
 	log:SetFontObject(ChatFontNormal)
 	log:SetJustifyH("LEFT")
-	log:SetMaxLines(300)
+	log:SetMaxLines(WINDOW_LINES)
+	for i = 1, table.getn(windowLines) do log:AddMessage(windowLines[i]) end
 	log:SetFading(false)
 	log:EnableMouseWheel(true)
 	log:SetScript("OnMouseWheel", function()
