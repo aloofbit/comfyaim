@@ -38,6 +38,9 @@ ChatTypeInfo["COMFYAIM"] = { r = 0.4, g = 0.8, b = 1.0, sticky = 1 }
 CHAT_COMFYAIM_SEND = "AIM: "
 SLASH_COMFYAIM1 = "/a"
 
+-- Taken before this file wraps it (below), so a dot command can still reach the server.
+local origSendChatMessage = SendChatMessage
+
 -- ------------------------------------------------------------------------------------------------
 -- helpers
 
@@ -121,7 +124,7 @@ end
 -- ------------------------------------------------------------------------------------------------
 -- the window
 
-local win, log, statusText, list, buddyTitle, input, signButton
+local win, log, statusText, list, buddyTitle, input, signButton, nickButton
 local buddyRows = {}
 local MAX_ROWS = 60
 local ROW_HEIGHT = 14
@@ -151,6 +154,48 @@ local function SignOnOff(on)
 	Push(on and "DLL\tsignon" or "DLL\tsignoff")
 end
 
+-- The hub has the last word on a nick (taken, reserved); this only saves a round trip for the shape.
+local function SetNick(name)
+	name = string.gsub(name or "", "%s", "")
+	if not string.find(name, "^[%w_]+$") or string.len(name) < 2 or string.len(name) > 16 then
+		Say(RED .. "A nick is 2 to 16 letters, digits or _.|r")
+		return
+	end
+	Push("DLL\tnick\t" .. name)
+end
+
+-- The Nick button's dialog, shaped like the client's own RENAME_GUILD popup.
+StaticPopupDialogs["COMFYAIM_NICK"] = {
+	text = "Your name in the AIM room:",
+	button1 = ACCEPT,
+	button2 = CANCEL,
+	hasEditBox = 1,
+	maxLetters = 16,
+	OnAccept = function()
+		SetNick(getglobal(this:GetParent():GetName() .. "EditBox"):GetText())
+	end,
+	EditBoxOnEnterPressed = function()
+		SetNick(getglobal(this:GetParent():GetName() .. "EditBox"):GetText())
+		this:GetParent():Hide()
+	end,
+	EditBoxOnEscapePressed = function()
+		this:GetParent():Hide()
+	end,
+	OnShow = function()
+		local box = getglobal(this:GetName() .. "EditBox")
+		box:SetText(nick or "")
+		box:HighlightText()
+		box:SetFocus()
+	end,
+	OnHide = function()
+		getglobal(this:GetName() .. "EditBox"):SetText("")
+	end,
+	timeout = 0,
+	exclusive = 1,
+	whileDead = 1,
+	hideOnEscape = 1,
+}
+
 local function VisibleRows()
 	if not list then return 0 end
 	local n = math.floor((list:GetHeight() - 28) / ROW_HEIGHT)
@@ -166,8 +211,10 @@ local function Refresh()
 		signButton:SetText(SignedOnOrTrying() and "Sign Off" or "Sign On")
 		if state == "waiting" or state == "nodll" or state == "badurl" then
 			signButton:Disable()
+			nickButton:Disable()
 		else
 			signButton:Enable()
+			nickButton:Enable()
 		end
 		local n = table.getn(buddies)
 		buddyTitle:SetText("Online (" .. n .. ")")
@@ -202,9 +249,35 @@ local function AddToWindow(text)
 	if log then log:AddMessage(text) end
 end
 
+-- A slash line typed in the AIM window runs as if typed in the chat box. The chat box's type is put
+-- back afterwards, so "/p hi" here does not leave the chat box in party mode.
+local function RunChatLine(text)
+	local eb = ChatFrameEditBox or DEFAULT_CHAT_FRAME.editBox
+	if not eb then return end
+	local oldType, oldTell = eb.chatType, eb.tellTarget
+	eb:SetText(text)
+	ChatEdit_SendText(eb, 1)
+	eb.chatType, eb.tellTarget = oldType, oldTell
+	eb:SetText("")
+end
+
+-- Neither kind of command goes to the room:
+--   "/..."  runs through the chat box (only the AIM window's input can send one here; in the chat
+--           box itself ChatEdit_ParseText has already taken it).
+--   ".x..." is a server command, sent as a whisper to yourself. The core reads commands from every
+--           chat type, whispers included, so a command runs; a line that is not one is seen by you
+--           alone, where SAY would have said it aloud to everyone nearby. "..." and ". hi" are talk.
 local function SendText(text)
 	text = string.gsub(text or "", "[\t\r\n]", " ")
 	if text == "" then return end
+	if string.sub(text, 1, 1) == "/" then
+		RunChatLine(text)
+		return
+	end
+	if string.find(text, "^%.%a") then
+		origSendChatMessage(text, "WHISPER", nil, UnitName("player"))
+		return
+	end
 	if state ~= "online" then
 		Say(RED .. "Not signed on.|r " .. StatusLine())
 		return
@@ -317,10 +390,12 @@ local function BuildWindow()
 	title:SetText("AIM")
 
 	statusText = win:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-	statusText:SetPoint("LEFT", title, "RIGHT", 10, -1)
+	-- On the title's baseline, not its centre: the fonts differ in size. Bottom to bottom, plus 1 for the
+	-- large font's deeper descender.
+	statusText:SetPoint("BOTTOMLEFT", title, "BOTTOMRIGHT", 10, 1)
 
 	local close = CreateFrame("Button", "ComfyAimFrameClose", win, "UIPanelCloseButton")
-	close:SetPoint("TOPRIGHT", win, "TOPRIGHT", -6, -6)
+	close:SetPoint("TOPRIGHT", win, "TOPRIGHT", -10, -10)
 
 	signButton = CreateFrame("Button", "ComfyAimFrameSignOn", win, "UIPanelButtonTemplate")
 	signButton:SetWidth(80)
@@ -331,11 +406,21 @@ local function BuildWindow()
 		SignOnOff(not SignedOnOrTrying())
 	end)
 
+	nickButton = CreateFrame("Button", "ComfyAimFrameNick", win, "UIPanelButtonTemplate")
+	nickButton:SetWidth(100)
+	nickButton:SetHeight(20)
+	nickButton:SetPoint("RIGHT", signButton, "LEFT", -4, 0)
+	nickButton:SetText("Change Name")
+	nickButton:SetScript("OnClick", function()
+		Defocus()
+		StaticPopup_Show("COMFYAIM_NICK")
+	end)
+
 	-- the buddy list, right
 	list = Panel(win)
 	list:SetWidth(130)
-	list:SetPoint("TOPRIGHT", win, "TOPRIGHT", -16, -44)
-	list:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -16, 22)
+	list:SetPoint("TOPRIGHT", win, "TOPRIGHT", -19, -44)
+	list:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -19, 20)
 	buddyTitle = list:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 	buddyTitle:SetPoint("TOPLEFT", list, "TOPLEFT", 8, -8)
 	for i = 1, MAX_ROWS do
@@ -364,13 +449,13 @@ local function BuildWindow()
 	-- the input, bottom left: the same panel as the room above it, so the two read as one column
 	local box = Panel(win)
 	box:SetHeight(28)
-	box:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 16, 22)
+	box:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 17, 20)
 	box:SetPoint("BOTTOMRIGHT", list, "BOTTOMLEFT", -6, 0)
 
 	-- the room, left, down to the input
 	local pane = Panel(win)
-	pane:SetPoint("TOPLEFT", win, "TOPLEFT", 16, -44)
-	pane:SetPoint("BOTTOMRIGHT", box, "TOPRIGHT", 0, 4)
+	pane:SetPoint("TOPLEFT", win, "TOPLEFT", 17, -44)
+	pane:SetPoint("BOTTOMRIGHT", box, "TOPRIGHT", 0, 6)
 
 	log = CreateFrame("ScrollingMessageFrame", nil, pane)
 	log:SetPoint("TOPLEFT", pane, "TOPLEFT", 8, -8)
@@ -397,6 +482,15 @@ local function BuildWindow()
 	input:SetAutoFocus(false)
 	input:SetMaxLetters(255)
 	input:SetHistoryLines(32)
+
+	-- A placeholder: 1.12 EditBoxes have none, so this is grey text laid over the box while it is empty.
+	local hint = box:CreateFontString(nil, "ARTWORK", "ChatFontNormal")
+	hint:SetPoint("LEFT", input, "LEFT", 0, 0)
+	hint:SetTextColor(0.5, 0.5, 0.5)
+	hint:SetText("Type your message")
+	input:SetScript("OnTextChanged", function()
+		if this:GetText() == "" then hint:Show() else hint:Hide() end
+	end)
 	box:EnableMouse(true)
 	box:SetScript("OnMouseDown", function() input:SetFocus() end)
 
@@ -437,7 +531,18 @@ local function Darken(frame)
 	end
 end
 
-local function Toggle()
+-- Focus a frame late: a command runs from inside the chat box, which hides itself right after, and the
+-- focus is set once that is done rather than raced against it.
+local focusLater = CreateFrame("Frame")
+focusLater:Hide()
+focusLater:SetScript("OnUpdate", function()
+	this:Hide()
+	if win and win:IsVisible() then input:SetFocus() end
+end)
+
+-- focus: put the cursor in the input when this opens the window. Typed commands ask for it; the
+-- friends list button does not, since a click there is not the start of typing.
+local function Toggle(focus)
 	if not win then
 		BuildWindow()
 		Darken(win)
@@ -447,6 +552,7 @@ local function Toggle()
 	else
 		win:Show()
 		Refresh()
+		if focus then focusLater:Show() end
 	end
 end
 
@@ -607,11 +713,13 @@ local function Command(msg)
 	rest = rest or ""
 
 	if msg == "" then
-		Toggle()
+		Toggle(true)
 	elseif not DllPresent() then
 		Say(RED .. "comfyaim.dll is not loaded.|r Add it to dlls.txt and restart the client.")
+	elseif word == "nick" and rest == "" then
+		StaticPopup_Show("COMFYAIM_NICK")
 	elseif word == "nick" and OneWord(rest) then
-		Push("DLL\tnick\t" .. rest)
+		SetNick(rest)
 	elseif word == "who" and rest == "" then
 		local names = {}
 		for i = 1, table.getn(buddies) do table.insert(names, buddies[i].n) end
@@ -646,8 +754,8 @@ end
 SLASH_COMFYAIMCMD1 = "/aim"
 SlashCmdList["COMFYAIMCMD"] = Command
 
--- The chat box in AIM mode sends through here. Everything in it is talk, commands included.
-local origSendChatMessage = SendChatMessage
+-- The chat box in AIM mode sends through here. /aim words are talk here; a server dot command is not
+-- (SendText).
 SendChatMessage = function(msg, chatType, language, target)
 	if chatType == "COMFYAIM" then
 		SendText(msg)
@@ -664,13 +772,13 @@ ChatEdit_ParseText = function(editBox, send)
 	origParseText(editBox, send)
 	if send == 1 and editBox.chatType == "COMFYAIM" then
 		local cmd = string.lower((string.gsub(before or "", "%s", "")))
-		if cmd == "/a" then Toggle() end
+		if cmd == "/a" then Toggle(true) end
 	end
 end
 
 -- For a chat addon that replaces ChatEdit_ParseText and never looks at ChatTypeInfo.
 SlashCmdList["COMFYAIM"] = function(msg)
-	if msg == nil or string.gsub(msg, "%s", "") == "" then Toggle() else SendText(msg) end
+	if msg == nil or string.gsub(msg, "%s", "") == "" then Toggle(true) else SendText(msg) end
 end
 
 -- ------------------------------------------------------------------------------------------------

@@ -38,7 +38,7 @@ namespace
 
     std::deque<std::string> g_in, g_out, g_ring;
     constexpr size_t kMaxQueued = 200;   // a line past this is dropped, oldest first
-    constexpr size_t kRing      = 50;    // room lines kept for a /reload
+    constexpr size_t kRing      = 100;   // room lines kept for a /reload, the same as the hub sends
 
     std::wstring g_ini;
     std::string  g_secret;

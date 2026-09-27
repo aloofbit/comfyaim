@@ -14,7 +14,7 @@ and every player with comfyaim sees it, whatever server they are on.
 | | What it does |
 | --- | --- |
 | **`/a`** | A chat type, like `/p` for party. `/a hello` talks in the room, and the chat box stays in AIM mode after Enter. |
-| **The AIM window** | The room, a buddy list of who is online, a box to type in, and Sign On and Sign Off. Drag the dots in the corner to resize it. |
+| **The AIM window** | The room, a buddy list of who is online, a box to type in, and the Change Name, Sign On and Sign Off buttons. Drag the dots in the corner to resize it. |
 | **Friends list button** | The running figure between Add Friend and Send Message opens the window. The number on it is how many are online. |
 | **Realms** | Each name shows the realm that player is on. Hover a name in the buddy list to see it. |
 | **Your nick** | Your first character's name, unless somebody has it. It stays yours on every server you play on. |
@@ -25,7 +25,7 @@ and every player with comfyaim sees it, whatever server they are on.
 | --- | --- |
 | `/a <text>` | Talk in the room. |
 | `/aim` | Open or close the window. |
-| `/aim nick <name>` | Change your nick: 2 to 16 letters, digits or `_`. |
+| `/aim nick <name>` | Change your nick: 2 to 16 letters, digits or `_`. `/aim nick` alone opens the Change Name box. |
 | `/aim who` | List who is online. |
 | `/aim ignore <nick>`, `/aim unignore <nick>` | Hide or show a player's lines. |
 | `/aim chat <1-7>`, `/aim chat off` | Which chat window shows the room. Off shows it only in the AIM window. |

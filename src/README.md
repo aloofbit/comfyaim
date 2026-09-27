@@ -58,7 +58,7 @@ This took three attempts:
    exists. An answer means Lua ran, this is the world, and the addon has loaded.
 3. **`/reload` keeps the same Lua state pointer.** The DLL could not see it. So the addon writes `0` into
    `comfyAimIn` as it loads, and the DLL, reading a value that is not its last hello, says hello again and
-   sends the state and the last 50 room lines.
+   sends the state and the last 100 room lines.
 
 Hello numbers start from `GetTickCount()`, not 0: `Config.wtf` keeps `comfyAimIn` from the last session, and
 counting from 0 once let a stale value answer a new hello.
@@ -112,7 +112,7 @@ node hub/test.js ws://127.0.0.1:8096/aim
 | Setting | Default | |
 | --- | --- | --- |
 | `PORT`, `HOST` | `8095`, `127.0.0.1` | Behind nginx. `X-Real-IP` is trusted only from a loopback peer. |
-| `DATA` | `hub/data` | `nicks.json`, `bans.json` (edit by hand, reloaded on change), `room.log`. |
+| `DATA` | `hub/data` | `nicks.json`, `bans.json` (edit by hand, reloaded on change), `room.log`, and `backlog.json` (the last 100 lines, sent on sign on and kept across restarts). |
 | `ADMINS` | none | Comma-separated nicks that may kick, ban and unban. |
 
 A nick belongs to the first secret that used it. The hub keeps `sha256(secret)` only. One secret holds one nick,

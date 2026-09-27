@@ -41,7 +41,7 @@ const ADMINS = new Set((process.env.ADMINS || '').split(',').map(s => s.trim().t
 
 const MAX_TEXT = 255;          // bytes, the client's own chat limit
 const MAX_FRAME = 4096;        // a client frame bigger than this closes the connection
-const BACKLOG = 30;            // lines sent on joining
+const BACKLOG = 100;           // lines sent on joining, and kept in backlog.json
 const RATE_LINES = 5;          // at most this many lines...
 const RATE_WINDOW = 10000;     // ...in this many ms...
 const MUTE_MS = 30000;         // ...or this long muted
@@ -58,6 +58,7 @@ fs.mkdirSync(DATA, { recursive: true });
 const NICKS_FILE = path.join(DATA, 'nicks.json');
 const BANS_FILE = path.join(DATA, 'bans.json');
 const ROOM_LOG = path.join(DATA, 'room.log');
+const BACKLOG_FILE = path.join(DATA, 'backlog.json');
 
 function readJson(file, dflt) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return dflt; }
@@ -126,7 +127,13 @@ const validNick = n => /^[A-Za-z0-9_]{2,16}$/.test(n) && !RESERVED.has(n.toLower
 
 const clients = new Set();      // every open socket
 const online = new Map();       // lower-case nick -> client
-const backlog = [];             // [ts, nick, text, realm]
+// [ts, nick, text, realm]. Saved, so a restart (every deploy is one) does not empty the room's history.
+const backlog = (() => {
+  const saved = readJson(BACKLOG_FILE, []);
+  return Array.isArray(saved) ? saved.filter(l => Array.isArray(l) && l.length >= 3).slice(-BACKLOG) : [];
+})();
+let backlogDirty = false;
+setInterval(() => { if (backlogDirty) { backlogDirty = false; writeJson(BACKLOG_FILE, backlog); } }, 10000).unref();
 
 function send(c, ...fields) {
   if (c.open) c.sock.write(frame(0x1, Buffer.from(fields.join('\t'), 'utf8')));
@@ -209,6 +216,7 @@ function say(c, text) {
   const ts = Math.floor(now / 1000);
   backlog.push([ts, c.nick, text, c.realm]);
   if (backlog.length > BACKLOG) backlog.shift();
+  backlogDirty = true;
   roomLog(c, text);
   broadcast('MSG', String(ts), c.nick, text, c.realm);
 }
@@ -357,6 +365,7 @@ setInterval(() => {
 
 function shutdown() {
   if (nicksDirty) writeJson(NICKS_FILE, nicks);
+  if (backlogDirty) writeJson(BACKLOG_FILE, backlog);
   for (const c of clients) { send(c, 'SYS', 'The hub is restarting.'); close(c, 'shutdown'); }
   server.close();
   setTimeout(() => process.exit(0), 500);
