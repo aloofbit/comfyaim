@@ -50,7 +50,7 @@ namespace
     std::string  g_stop;         // "banned" or "replaced": no reconnecting until "reconnect"
     bool         g_dropSocket = false;
 
-    const char* kVersion = "comfyaim 0.1";
+    const char* kVersion = "comfyaim 0.1.1";
 
     void PushInLocked(const std::string& line)
     {
@@ -360,7 +360,7 @@ namespace
             SetState("badurl");
             return 0;
         }
-        HINTERNET session = WinHttpOpen(L"comfyaim/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+        HINTERNET session = WinHttpOpen(L"comfyaim/0.1.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
                                         WINHTTP_NO_PROXY_BYPASS, 0);
         if (!session)
         {
