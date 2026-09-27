@@ -1,4 +1,6 @@
-# comfyaim
+<img width="256" height="141" alt="azeroth-aim" src="https://github.com/user-attachments/assets/00174a9e-81b5-43ea-ab8f-fbb75927a998" />
+<br>
+<br>
 
 > **Bugs, questions and screenshots. Ty for testing!: [join our Discord](https://discord.gg/YSWzYk8xP).**
 >
