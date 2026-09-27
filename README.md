@@ -7,6 +7,9 @@
 One chat room for everybody who plays World of Warcraft 1.12 on a server of their own. Type `/a hello` in game,
 and every player with comfyaim sees it, whatever server they are on.
 
+<img width="692" height="396" alt="image" src="https://github.com/user-attachments/assets/ee7e24ed-5c51-47a5-9b2e-edebdb63e1d1" />
+
+
 <!-- owner's line goes here -->
 
 ## Features
