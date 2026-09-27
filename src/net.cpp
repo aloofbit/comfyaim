@@ -12,7 +12,8 @@
 //
 // Two answers stop the reconnecting for the rest of the session: ERR banned, and ERR replaced (the same
 // secret signed on from another client). Reconnecting after either would only repeat it; after
-// "replaced" it would throw the other client off in turn, forever. "/aim reconnect" starts it again.
+// "replaced" it would throw the other client off in turn, forever. Signing off is the third stop, and
+// the only one kept in the ini (`online = 0`). The Sign On button starts all three again.
 
 #define WIN32_LEAN_AND_MEAN
 
@@ -389,9 +390,12 @@ namespace
             if (RunOnce(session, u, nick))
                 wait = 2000;
             EnterCriticalSection(&g_lock);
-            if (g_stop.empty() && !g_nick.empty())
+            const bool stopped = !g_stop.empty();
+            if (!stopped && !g_nick.empty())
                 SetStateLocked("offline");
             LeaveCriticalSection(&g_lock);
+            if (stopped)
+                continue;   // straight to the stop state, not a reconnect wait first
             WaitForSingleObject(g_wake, wait);
             wait = wait * 2 > 60000 ? 60000 : wait * 2;
         }
@@ -448,6 +452,8 @@ void NetStart(const wchar_t* iniPath)
     }
     g_nick = g_savedNick = ReadIni(L"nick");
     g_realm = ReadIni(L"realm");
+    if (ReadIni(L"online") == "0")
+        g_stop = "signedoff";   // signed off last session: wait for Sign On
     Log("net: hub %ls, nick \"%s\"", g_cfg.hubUrl, g_nick.c_str());
 
     HANDLE a = CreateThread(nullptr, 0, ConnectionThread, nullptr, 0, nullptr);
@@ -499,10 +505,27 @@ void NetCommand(const std::string& cmd)
             }
         }
     }
-    else if (verb == "reconnect")
+    else if (verb == "signon" || verb == "reconnect")
     {
         g_stop.clear();
+        WriteIni(L"online", "1");
         SetEvent(g_wake);
+    }
+    else if (verb == "signoff")
+    {
+        // The choice is kept, so the next start stays signed off. The socket is shut from here with a
+        // close frame; the hub answers it, the blocked receive returns CLOSE, and the connection thread
+        // goes to the stop state without a reconnect wait.
+        g_stop = "signedoff";
+        g_dropSocket = true;
+        WriteIni(L"online", "0");
+        LeaveCriticalSection(&g_lock);
+        EnterCriticalSection(&g_wsLock);
+        if (g_ws)
+            WinHttpWebSocketShutdown(g_ws, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
+        LeaveCriticalSection(&g_wsLock);
+        SetEvent(g_wake);
+        return;
     }
     else if (verb == "state")
     {

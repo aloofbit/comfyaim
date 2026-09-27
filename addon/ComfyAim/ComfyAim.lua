@@ -9,15 +9,17 @@
 --
 -- A line is fields split by a tab. The hub's lines are listed at the top of hub/server.js. The DLL adds
 -- LOCAL lines of its own: "LOCAL state <state> <nick>" and "LOCAL notsent <text>". A line that starts
--- "DLL" goes to the DLL and not the hub: "DLL nick <name>", "DLL realm <name>", "DLL reconnect".
+-- "DLL" goes to the DLL and not the hub: "DLL nick <name>", "DLL realm <name>", "DLL signon",
+-- "DLL signoff".
 --
 -- Text from the hub is shown with every | doubled, so nobody can draw colours, links or textures in
 -- somebody else's chat frame.
 --
--- /aim and /a are a CHAT TYPE, not only a slash command: ChatEdit_ParseText checks ChatTypeInfo before
--- SlashCmdList, so with an entry here "/a " turns the chat box into an AIM box the way "/p " does for
--- party, and it stays that way after Enter (sticky). SendChatMessage is wrapped to catch that type.
--- The price: this client also has /a as a short /assist. /assist itself still works.
+-- /a TALKS and /aim is FOR EVERYTHING ELSE, and the two never mix: a line in /a is always said, and
+-- /aim never says anything. /a is a CHAT TYPE, not only a slash command: ChatEdit_ParseText checks
+-- ChatTypeInfo before SlashCmdList, so with an entry here "/a " turns the chat box into an AIM box the
+-- way "/p " does for party, and it stays that way after Enter (sticky). SendChatMessage is wrapped to
+-- catch that type. The price: this client also has /a as a short /assist. /assist itself still works.
 
 local ADDON = "ComfyAim"
 local GOLD = "|cffffd200"
@@ -34,8 +36,7 @@ local autoNickTried = false
 
 ChatTypeInfo["COMFYAIM"] = { r = 0.4, g = 0.8, b = 1.0, sticky = 1 }
 CHAT_COMFYAIM_SEND = "AIM: "
-SLASH_COMFYAIM1 = "/aim"
-SLASH_COMFYAIM2 = "/a"
+SLASH_COMFYAIM1 = "/a"
 
 -- ------------------------------------------------------------------------------------------------
 -- helpers
@@ -120,7 +121,7 @@ end
 -- ------------------------------------------------------------------------------------------------
 -- the window
 
-local win, log, statusText, list, buddyTitle, input
+local win, log, statusText, list, buddyTitle, input, signButton
 local buddyRows = {}
 local MAX_ROWS = 60
 local ROW_HEIGHT = 14
@@ -132,10 +133,22 @@ local function StatusLine()
 	if state == "offline" then return "Offline. Trying again." end
 	if state == "nonick" then return "Pick a nick: /aim nick <name>" end
 	if state == "banned" then return "Banned from the hub." end
-	if state == "replaced" then return "Signed on from another client. /aim reconnect" end
+	if state == "replaced" then return "Signed on from another client." end
+	if state == "signedoff" then return "Signed off." end
 	if state == "badurl" then return "Bad hub address in comfyaim.ini." end
 	if state == "waiting" then return "Waiting for comfyaim.dll." end
 	return "comfyaim.dll is not loaded."
+end
+
+-- True while comfyaim is on or trying to be: then the button offers Sign Off. After a sign off, a
+-- ban or another client taking the nick, it offers Sign On.
+local function SignedOnOrTrying()
+	return state == "online" or state == "connecting" or state == "connected" or state == "offline"
+		or state == "nonick"
+end
+
+local function SignOnOff(on)
+	Push(on and "DLL\tsignon" or "DLL\tsignoff")
 end
 
 local function VisibleRows()
@@ -150,6 +163,12 @@ local function Refresh()
 	local online = state == "online"
 	if statusText then
 		statusText:SetText((online and "|cff33ff33" or GREY) .. StatusLine() .. "|r")
+		signButton:SetText(SignedOnOrTrying() and "Sign Off" or "Sign On")
+		if state == "waiting" or state == "nodll" or state == "badurl" then
+			signButton:Disable()
+		else
+			signButton:Enable()
+		end
 		local n = table.getn(buddies)
 		buddyTitle:SetText("Online (" .. n .. ")")
 		local rows = VisibleRows()
@@ -199,16 +218,37 @@ local function SavePlace()
 	ComfyAimDB.size = { win:GetWidth(), win:GetHeight() }
 end
 
+-- A flat one pixel border, the same grey on all four sides. Not the tooltip border: that one is lit on
+-- its right edge and dark on its left, so two panels side by side met bright edge to dark edge and read
+-- as two different styles. The solid texture is the chat window's own background, which every 1.12
+-- client has; WHITE8X8 would do the same but is in Turtle's patch-I only.
+local panels = {}
+
 local function Panel(parent)
 	local f = CreateFrame("Frame", nil, parent)
+	table.insert(panels, f)
 	f:SetBackdrop({
-		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-		tile = true, tileSize = 16, edgeSize = 12,
-		insets = { left = 3, right = 3, top = 3, bottom = 3 },
+		bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+		edgeFile = "Interface\\ChatFrame\\ChatFrameBackground",
+		tile = false, edgeSize = 1,
+		insets = { left = 1, right = 1, top = 1, bottom = 1 },
 	})
-	f:SetBackdropColor(0, 0, 0, 0.6)
+	f:SetBackdropColor(0, 0, 0, 0.55)
+	f:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.9)
 	return f
+end
+
+-- A 1.12 EditBox keeps keyboard focus until something takes it away, and a click in the 3D world raises
+-- nothing an addon can see: after typing, W A S D went into the box as letters. So a full-screen catcher
+-- at BACKGROUND strata (above the world, below every piece of UI) is up while the box has focus, and a
+-- click on it lets the focus go. It costs that one click, the same as ComfyHousingDev's; the free route
+-- through CameraOrSelectOrMoveStart is protected and blocked. The window, its rows and its grip let the
+-- focus go themselves.
+local catcher
+
+local function Defocus()
+	if input then input:ClearFocus() end
+	if catcher then catcher:Hide() end
 end
 
 -- The corner grip: six dots in a triangle, the usual sign for "drag to resize". This client has no
@@ -227,7 +267,10 @@ local function BuildGrip()
 		t:SetHeight(2)
 		t:SetPoint("BOTTOMLEFT", grip, "BOTTOMLEFT", d[1], d[2] + 2)
 	end
-	grip:SetScript("OnMouseDown", function() win:StartSizing("BOTTOMRIGHT") end)
+	grip:SetScript("OnMouseDown", function()
+		Defocus()
+		win:StartSizing("BOTTOMRIGHT")
+	end)
 	grip:SetScript("OnMouseUp", function()
 		win:StopMovingOrSizing()
 		SavePlace()
@@ -279,6 +322,15 @@ local function BuildWindow()
 	local close = CreateFrame("Button", "ComfyAimFrameClose", win, "UIPanelCloseButton")
 	close:SetPoint("TOPRIGHT", win, "TOPRIGHT", -6, -6)
 
+	signButton = CreateFrame("Button", "ComfyAimFrameSignOn", win, "UIPanelButtonTemplate")
+	signButton:SetWidth(80)
+	signButton:SetHeight(20)
+	signButton:SetPoint("RIGHT", close, "LEFT", -2, 1)
+	signButton:SetScript("OnClick", function()
+		Defocus()
+		SignOnOff(not SignedOnOrTrying())
+	end)
+
 	-- the buddy list, right
 	list = Panel(win)
 	list:SetWidth(130)
@@ -304,14 +356,21 @@ local function BuildWindow()
 			GameTooltip:Show()
 		end)
 		row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		row:SetScript("OnMouseDown", Defocus)
 		row:Hide()
 		buddyRows[i] = row
 	end
 
-	-- the room, left
+	-- the input, bottom left: the same panel as the room above it, so the two read as one column
+	local box = Panel(win)
+	box:SetHeight(28)
+	box:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 16, 22)
+	box:SetPoint("BOTTOMRIGHT", list, "BOTTOMLEFT", -6, 0)
+
+	-- the room, left, down to the input
 	local pane = Panel(win)
 	pane:SetPoint("TOPLEFT", win, "TOPLEFT", 16, -44)
-	pane:SetPoint("BOTTOMRIGHT", list, "BOTTOMLEFT", -6, 30)
+	pane:SetPoint("BOTTOMRIGHT", box, "TOPRIGHT", 0, 4)
 
 	log = CreateFrame("ScrollingMessageFrame", nil, pane)
 	log:SetPoint("TOPLEFT", pane, "TOPLEFT", 8, -8)
@@ -329,14 +388,32 @@ local function BuildWindow()
 		end
 	end)
 
-	input = CreateFrame("EditBox", "ComfyAimFrameInput", win, "InputBoxTemplate")
-	input:SetHeight(20)
-	input:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 24, 16)
-	input:SetPoint("BOTTOMRIGHT", list, "BOTTOMLEFT", -8, -6)
+	input = CreateFrame("EditBox", "ComfyAimFrameInput", box)
+	input:SetPoint("TOPLEFT", box, "TOPLEFT", 8, -4)
+	input:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -8, 4)
+	input:SetFontObject(ChatFontNormal)
+	local c = ChatTypeInfo["COMFYAIM"]
+	input:SetTextColor(c.r, c.g, c.b)
 	input:SetAutoFocus(false)
 	input:SetMaxLetters(255)
+	input:SetHistoryLines(32)
+	box:EnableMouse(true)
+	box:SetScript("OnMouseDown", function() input:SetFocus() end)
+
+	catcher = CreateFrame("Frame", "ComfyAimCatcher", UIParent)
+	catcher:SetAllPoints(UIParent)
+	catcher:SetFrameStrata("BACKGROUND")
+	catcher:EnableMouse(true)
+	catcher:Hide()
+	catcher:SetScript("OnMouseDown", Defocus)
+	input:SetScript("OnEditFocusGained", function() catcher:Show() end)
+	input:SetScript("OnEditFocusLost", function() catcher:Hide() end)
+	win:SetScript("OnMouseDown", Defocus)
+	win:SetScript("OnHide", Defocus)
 	input:SetScript("OnEnterPressed", function()
-		SendText(this:GetText())
+		local text = this:GetText()
+		if text ~= "" then this:AddHistoryLine(text) end
+		SendText(text)
 		this:SetText("")
 	end)
 	input:SetScript("OnEscapePressed", function() this:ClearFocus() end)
@@ -345,8 +422,26 @@ local function BuildWindow()
 	Refresh()
 end
 
+-- ShaguTweaks' Darkened UI darkens by walking UIParent ONCE, when the module turns on
+-- (mods/dark-ui-elements.lua). The window is built the first time it opens, after that walk, so it has
+-- to ask. DarkenFrame skips solid textures and icons by name, so the grip dots and the friends button
+-- keep their colour; what it changes is the borders and the dialog frame.
+--
+-- It also greys the panels' BACKGROUNDS: in 1.12 a backdrop is textures that GetRegions returns, and
+-- DarkenFrame vertex-colours every one it does not skip, the black fill included. So the panels get
+-- their own fill back afterwards and keep the darkened border.
+local function Darken(frame)
+	if ShaguTweaks and ShaguTweaks.DarkMode and ShaguTweaks.DarkenFrame then
+		ShaguTweaks.DarkenFrame(frame)
+		for _, p in ipairs(panels) do p:SetBackdropColor(0, 0, 0, 0.55) end
+	end
+end
+
 local function Toggle()
-	if not win then BuildWindow() end
+	if not win then
+		BuildWindow()
+		Darken(win)
+	end
 	if win:IsVisible() then
 		win:Hide()
 	else
@@ -441,6 +536,9 @@ function ComfyAim_OnLine(line)
 			AddToWindow(GREY .. "Lost the hub. Trying again.|r")
 		elseif state == "replaced" or state == "banned" then
 			Say(RED .. StatusLine() .. "|r")
+		elseif state == "signedoff" and was ~= "signedoff" and was ~= "waiting" then
+			Say(GREY .. "Signed off.|r")
+			AddToWindow(GREY .. "Signed off.|r")
 		end
 		TryAutoNick()
 		if state == "online" and was ~= "online" then Push("WHO") end
@@ -488,20 +586,20 @@ function ComfyAim_OnLine(line)
 end
 
 -- ------------------------------------------------------------------------------------------------
--- /aim and /a
+-- /a talks, /aim is for everything else
 
 local function Help()
-	Say("/a <text>: talk. /aim alone: the window.")
+	Say("/a <text>: talk. /aim: the window.")
 	Say("/aim nick <name>, /aim who, /aim ignore <nick>, /aim unignore <nick>")
-	Say("/aim chat <1-7|off>: where the room shows in chat. /aim reconnect")
+	Say("/aim chat <1-7|off>: where the room shows in chat. /aim on, /aim off: sign on or off.")
 end
 
--- A command word takes over only when the rest has the right shape, so "who is around" is talk.
 local function OneWord(rest)
 	return rest ~= "" and not string.find(rest, " ", 1, true)
 end
 
-local function Handle(msg)
+-- /aim never talks: a line it does not know gets the help, so a typo in a command is not said aloud.
+local function Command(msg)
 	msg = string.gsub(msg or "", "^%s+", "")
 	msg = string.gsub(msg, "%s+$", "")
 	local _, _, word, rest = string.find(msg, "^(%S+)%s*(.*)$")
@@ -512,16 +610,14 @@ local function Handle(msg)
 		Toggle()
 	elseif not DllPresent() then
 		Say(RED .. "comfyaim.dll is not loaded.|r Add it to dlls.txt and restart the client.")
-	elseif word == "help" and rest == "" then
-		Help()
 	elseif word == "nick" and OneWord(rest) then
 		Push("DLL\tnick\t" .. rest)
 	elseif word == "who" and rest == "" then
 		local names = {}
 		for i = 1, table.getn(buddies) do table.insert(names, buddies[i].n) end
 		Say(table.getn(names) .. " online: " .. (table.getn(names) > 0 and table.concat(names, ", ") or "nobody"))
-	elseif word == "reconnect" and rest == "" then
-		Push("DLL\treconnect")
+	elseif (word == "on" or word == "off") and rest == "" then
+		SignOnOff(word == "on")
 	elseif word == "ignore" and OneWord(rest) then
 		ComfyAimDB.ignore[string.lower(rest)] = true
 		Say("Ignoring " .. Safe(rest) .. ".")
@@ -543,34 +639,39 @@ local function Handle(msg)
 	elseif (word == "kick" or word == "ban" or word == "unban") and OneWord(rest) then
 		Push("ADMIN\t" .. word .. "\t" .. rest)
 	else
-		SendText(msg)
+		Help()
 	end
 end
 
--- The chat box in AIM mode sends through here.
+SLASH_COMFYAIMCMD1 = "/aim"
+SlashCmdList["COMFYAIMCMD"] = Command
+
+-- The chat box in AIM mode sends through here. Everything in it is talk, commands included.
 local origSendChatMessage = SendChatMessage
 SendChatMessage = function(msg, chatType, language, target)
 	if chatType == "COMFYAIM" then
-		Handle(msg)
+		SendText(msg)
 		return
 	end
 	return origSendChatMessage(msg, chatType, language, target)
 end
 
--- "/aim" or "/a" on its own, then Enter, leaves an empty box that never reaches SendChatMessage.
--- That is the one that opens the window.
+-- "/a" on its own, then Enter, leaves an empty box that never reaches SendChatMessage. That one opens
+-- the window, the same as /aim.
 local origParseText = ChatEdit_ParseText
 ChatEdit_ParseText = function(editBox, send)
 	local before = editBox:GetText()
 	origParseText(editBox, send)
 	if send == 1 and editBox.chatType == "COMFYAIM" then
-		local cmd = string.lower(string.gsub(before or "", "%s", ""))
-		if cmd == "/aim" or cmd == "/a" then Toggle() end
+		local cmd = string.lower((string.gsub(before or "", "%s", "")))
+		if cmd == "/a" then Toggle() end
 	end
 end
 
 -- For a chat addon that replaces ChatEdit_ParseText and never looks at ChatTypeInfo.
-SlashCmdList["COMFYAIM"] = Handle
+SlashCmdList["COMFYAIM"] = function(msg)
+	if msg == nil or string.gsub(msg, "%s", "") == "" then Toggle() else SendText(msg) end
+end
 
 -- ------------------------------------------------------------------------------------------------
 -- start-up

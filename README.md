@@ -13,8 +13,8 @@ and every player with comfyaim sees it, whatever server they are on.
 
 | | What it does |
 | --- | --- |
-| **`/a` and `/aim`** | A chat type, like `/p` for party. `/a hello` talks in the room, and the chat box stays in AIM mode after Enter. |
-| **The AIM window** | The room, a buddy list of who is online, and a box to type in. Drag the dots in the corner to resize it. |
+| **`/a`** | A chat type, like `/p` for party. `/a hello` talks in the room, and the chat box stays in AIM mode after Enter. |
+| **The AIM window** | The room, a buddy list of who is online, a box to type in, and Sign On and Sign Off. Drag the dots in the corner to resize it. |
 | **Friends list button** | The running figure between Add Friend and Send Message opens the window. The number on it is how many are online. |
 | **Realms** | Each name shows the realm that player is on. Hover a name in the buddy list to see it. |
 | **Your nick** | Your first character's name, unless somebody has it. It stays yours on every server you play on. |
@@ -29,7 +29,7 @@ and every player with comfyaim sees it, whatever server they are on.
 | `/aim who` | List who is online. |
 | `/aim ignore <nick>`, `/aim unignore <nick>` | Hide or show a player's lines. |
 | `/aim chat <1-7>`, `/aim chat off` | Which chat window shows the room. Off shows it only in the AIM window. |
-| `/aim reconnect` | Connect again after you signed on from another client. |
+| `/aim on`, `/aim off` | Sign on or off, the same as the button. Signed off stays signed off after a restart. |
 
 `/a` is also the short form of `/assist` in this client. `/assist` still works. A macro that uses `/a` to
 assist now talks in the room instead.

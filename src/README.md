@@ -40,7 +40,7 @@ value at `cvar+0x20` every 0.1 s and treats a changed value as a new line. It an
 only then does the addon clear the CVar and write its next line. Without the ack, two lines written between
 two reads would lose the first.
 
-A line starting `DLL\t` is for the DLL: `nick`, `realm`, `reconnect`, `state`. Anything else goes to the hub.
+A line starting `DLL\t` is for the DLL: `nick`, `realm`, `signon`, `signoff`, `state`. Anything else goes to the hub.
 
 ### The DLL to Lua
 
@@ -73,19 +73,32 @@ code. WinHTTP allows one receive and one send at a time on a socket, so the conn
 receive and a separate send thread sends. The render thread never waits on either.
 
 Reconnects wait 2 s, doubling to 60 s. `ERR banned` and `ERR replaced` stop reconnecting for the session:
-reconnecting after "replaced" would throw the other client off in turn, forever.
+reconnecting after "replaced" would throw the other client off in turn, forever. Sign Off is the third stop,
+and the only one kept in the ini (`online = 0`), so a signed off client stays signed off after a restart.
 
 The nick is written to the ini only after the hub's `WELCOME`, so a refused nick never reaches it.
 
 ## The addon
 
-`/aim` and `/a` are a chat type (`ChatTypeInfo["COMFYAIM"]`, sticky), not only slash commands.
-`ChatEdit_ParseText` checks `ChatTypeInfo` before `SlashCmdList`, so `/a ` switches the chat box like `/p `
-does. `SendChatMessage` is wrapped to catch the type. `ChatEdit_ParseText` is wrapped too, because a bare
-`/aim` + Enter leaves an empty box that never reaches `SendChatMessage`, and that is the one that opens the
-window. `SlashCmdList["COMFYAIM"]` stays as a fallback for chat addons that replace `ChatEdit_ParseText`.
+**`/a` talks and `/aim` is for everything else, and they never mix.** Until 0.1.1 `/aim` was the chat
+type too and read its first word as a command, so a line saying "who" was a command. Now every line in
+`/a` is said, and `/aim` never says anything: a line it does not know gets the help.
+
+`/a` is a chat type (`ChatTypeInfo["COMFYAIM"]`, sticky), not only a slash command. `ChatEdit_ParseText`
+checks `ChatTypeInfo` before `SlashCmdList`, so `/a ` switches the chat box like `/p ` does.
+`SendChatMessage` is wrapped to catch the type. `ChatEdit_ParseText` is wrapped too, because a bare `/a` +
+Enter leaves an empty box that never reaches `SendChatMessage`, and that one opens the window.
+`SlashCmdList["COMFYAIM"]` stays as a fallback for chat addons that replace `ChatEdit_ParseText`. `/aim` is
+`SlashCmdList["COMFYAIMCMD"]`.
 
 Text from the hub is shown with every `|` doubled.
+
+**The window is built the first time it opens**, after ShaguTweaks' Darkened UI has walked `UIParent`
+once, so it calls `ShaguTweaks.DarkenFrame` itself. That also greys the panel fills (in 1.12 a backdrop is
+textures `GetRegions` returns), so the panels set their fill again after it.
+
+**A focused EditBox strands the player**: a click on the 3D world raises nothing an addon can see. A
+full-screen catcher at `BACKGROUND` strata is up while the box has focus, the same as ComfyHousingDev's.
 
 ## The hub
 
